@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # 1. Database for LiteLLM
+  postgres:
+    image: postgres:16-alpine
+    container_name: litellm_db
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellmpassword
+      POSTGRES_DB: litellm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # 2. Ollama Engine
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    restart: unless-stopped
+
+  # 3. Model Puller
+  ollama-pull-model:
+    image: curlimages/curl:latest
+    container_name: ollama_pull_model
+    depends_on:
+      - ollama
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for Ollama service...';
+      while ! curl -s http://ollama:11434/api/tags > /dev/null; do sleep 2; done;
+      echo 'Pulling qwen2.5-coder:3b model...';
+      curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5-coder:3b\"}';
+      echo 'Model pull completed.';
+      "
+
+  # 4. LiteLLM Proxy connected to Postgres
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    ports:
+      - "4000:4000"
+    environment:
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      - DATABASE_URL=postgresql://litellm:litellmpassword@postgres:5432/litellm
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    command: [ "--config", "/app/config.yaml", "--port", "4000" ]
+    depends_on:
+      - postgres
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_storage:
+  postgres_data:

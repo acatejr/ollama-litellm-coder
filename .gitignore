@@ -1,0 +1,107 @@
+# --- Environment files (secrets) ---
+# Explicit patterns so .env files stay ignored even if the broad
+# *env* rule below is ever removed. Do not add !.env* negations.
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+.envrc
+.direnv/
+
+*env*
+*scratch*
+*.pyc
+temp/
+tmp/
+.venv/
+
+# --- Terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# Keep .terraform.lock.hcl committed (pins provider versions/hashes)
+
+# --- Secrets / keys ---
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+secrets.*
+
+# --- Python: bytecode & extensions ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Python: packaging / build ---
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+*.egg
+.installed.cfg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Python: virtual environments ---
+venv/
+env/
+ENV/
+.python-version
+
+# --- Python: tests, coverage, type checkers, linters ---
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Logs ---
+*.log
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
