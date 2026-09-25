@@ -1,0 +1,10 @@
+model_list:
+  - model_name: qwen2.5-coder-3b
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:3b   # /api/chat: message roles + native tool calls
+      api_base: "http://ollama:11434"
+      num_thread: 4          # Pin threads to match 4 vCPUs (prevents CPU thrashing)
+      num_ctx: 32768         # Model's full context; agent system prompts alone are 5-12k tokens
+      keep_alive: -1         # Keeps model permanently loaded in RAM (no cold starts)
+    model_info:
+      supports_function_calling: true   # Pass tools through to the model natively

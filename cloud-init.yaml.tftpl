@@ -1,0 +1,32 @@
+#cloud-config
+# Rendered by Terraform (templatefile) into the droplet's user_data.
+# Server setup only: the stack itself is defined in docker-compose.yml and
+# litellm-config.yaml, which are passed in base64-encoded so their contents
+# need no escaping here.
+
+package_update: true
+packages:
+  - curl
+  - docker.io
+  - docker-compose-v2
+
+write_files:
+  - path: /opt/ai-stack/docker-compose.yml
+    encoding: b64
+    content: ${compose_b64}
+    permissions: "0644"
+
+  - path: /opt/ai-stack/litellm-config.yaml
+    encoding: b64
+    content: ${litellm_config_b64}
+    permissions: "0644"
+
+  # Secrets for docker compose; readable by root only.
+  - path: /opt/ai-stack/.env
+    encoding: b64
+    content: ${stack_env_b64}
+    permissions: "0600"
+
+runcmd:
+  - systemctl enable --now docker
+  - cd /opt/ai-stack && docker compose up -d

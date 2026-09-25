@@ -26,11 +26,15 @@ resource "digitalocean_droplet" "ai_node" {
   size     = var.droplet_size
   ssh_keys = [for k in data.digitalocean_ssh_key.keys : k.fingerprint]
 
-  user_data = replace(
-    file("${path.module}/user_data.sh"),
-    "$${LITELLM_MASTER_KEY}",
-    var.litellm_master_key
-  )
+  user_data = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    compose_b64        = base64encode(file("${path.module}/docker-compose.yml"))
+    litellm_config_b64 = base64encode(file("${path.module}/litellm-config.yaml"))
+    # Single quotes make docker compose read the value literally (no $ expansion).
+    stack_env_b64 = base64encode(<<-EOT
+      LITELLM_MASTER_KEY='${var.litellm_master_key}'
+    EOT
+    )
+  })
 }
 
 # Firewall Configuration

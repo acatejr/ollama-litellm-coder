@@ -36,4 +36,9 @@ variable "litellm_master_key" {
     condition     = startswith(var.litellm_master_key, "sk-")
     error_message = "litellm_master_key must start with \"sk-\" (required by LiteLLM)."
   }
+
+  validation {
+    condition     = length(regexall("['\\s]", var.litellm_master_key)) == 0
+    error_message = "litellm_master_key must not contain single quotes or whitespace."
+  }
 }

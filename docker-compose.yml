@@ -1,29 +1,46 @@
-version: '3.8'
+# AI stack: Ollama + LiteLLM proxy (with Postgres for keys/spend tracking).
+#
+# On the droplet this lives in /opt/ai-stack/ next to litellm-config.yaml and a
+# .env file that cloud-init generates with the secrets below.
+#
+# Required variables (from .env or the shell):
+#   LITELLM_MASTER_KEY   LiteLLM admin/API master key (must start with "sk-")
+# Optional:
+#   POSTGRES_PASSWORD    defaults to "litellmpassword"
 
 services:
-  # 1. Database for LiteLLM
   postgres:
     image: postgres:16-alpine
     container_name: litellm_db
     environment:
       POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellmpassword
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-litellmpassword}
       POSTGRES_DB: litellm
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
-  # 2. Ollama Engine
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_NUM_PARALLEL=1       # Directs 100% CPU to a single prompt at a time
+      - OLLAMA_MAX_LOADED_MODELS=1   # Prevents RAM swapping
+      - OLLAMA_KEEP_ALIVE=-1         # Prevents unloading model on idle
+      - OLLAMA_CONTEXT_LENGTH=32768  # Default context if a request doesn't set num_ctx
+      - OLLAMA_FLASH_ATTENTION=1     # Faster, lower-memory attention on long prompts
+      - OLLAMA_KV_CACHE_TYPE=q8_0    # Halves context-cache RAM vs f16 (needs flash attention)
     volumes:
       - ollama_storage:/root/.ollama
     restart: unless-stopped
 
-  # 3. Model Puller
   ollama-pull-model:
     image: curlimages/curl:latest
     container_name: ollama_pull_model
@@ -38,21 +55,22 @@ services:
       echo 'Model pull completed.';
       "
 
-  # 4. LiteLLM Proxy connected to Postgres
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     container_name: litellm
     ports:
       - "4000:4000"
     environment:
-      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
-      - DATABASE_URL=postgresql://litellm:litellmpassword@postgres:5432/litellm
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set}
+      - DATABASE_URL=postgresql://litellm:${POSTGRES_PASSWORD:-litellmpassword}@postgres:5432/litellm
     volumes:
-      - ./litellm-config.yaml:/app/config.yaml
+      - ./litellm-config.yaml:/app/config.yaml:ro
     command: [ "--config", "/app/config.yaml", "--port", "4000" ]
     depends_on:
-      - postgres
-      - ollama
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
