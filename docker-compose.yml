@@ -5,6 +5,7 @@
 #
 # Required variables (from .env or the shell):
 #   LITELLM_MASTER_KEY   LiteLLM admin/API master key (must start with "sk-")
+#   LITELLM_API_KEY      Client key created at startup, limited to qwen2.5-coder-3b
 # Optional:
 #   POSTGRES_PASSWORD    defaults to "litellmpassword"
 
@@ -72,6 +73,38 @@ services:
       ollama:
         condition: service_started
     restart: unless-stopped
+
+  # One-shot: create the client API key in LiteLLM if it doesn't exist yet.
+  # Runs on every `docker compose up`; does nothing once the key exists.
+  litellm-create-key:
+    image: curlimages/curl:latest
+    container_name: litellm_create_key
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY must be set}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:?LITELLM_API_KEY must be set}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo 'Waiting for LiteLLM...'
+        i=0
+        until curl -sf http://litellm:4000/health/readiness > /dev/null; do
+          i=$$((i + 1))
+          if [ $$i -ge 180 ]; then echo 'LiteLLM not ready after 15 minutes'; exit 1; fi
+          sleep 5
+        done
+        if curl -sf -H "Authorization: Bearer $$LITELLM_API_KEY" http://litellm:4000/v1/models > /dev/null; then
+          echo 'API key already exists; nothing to do.'
+          exit 0
+        fi
+        curl -sfS -X POST http://litellm:4000/key/generate \
+          -H "Authorization: Bearer $$LITELLM_MASTER_KEY" \
+          -H 'Content-Type: application/json' \
+          -d "{\"key\": \"$$LITELLM_API_KEY\", \"models\": [\"qwen2.5-coder-3b\"]}" > /dev/null \
+          || { echo 'Failed to create API key'; exit 1; }
+        echo 'Created API key for qwen2.5-coder-3b.'
+    depends_on:
+      litellm:
+        condition: service_started
 
 volumes:
   ollama_storage:

@@ -1,0 +1,9 @@
+[project]
+name = "ollama-litellm-coder"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.103.1",
+    "ollama>=0.6.3",
+    "python-dotenv>=1.2.3",
+]

@@ -42,3 +42,14 @@ variable "litellm_master_key" {
     error_message = "litellm_master_key must not contain single quotes or whitespace."
   }
 }
+
+variable "litellm_api_key" {
+  description = "Client API key created in LiteLLM at startup, limited to qwen2.5-coder-3b (set via TF_VAR_litellm_api_key)"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^sk-[A-Za-z0-9_-]{20,}$", var.litellm_api_key))
+    error_message = "litellm_api_key must be \"sk-\" followed by at least 20 letters, digits, - or _ (e.g. sk-$(openssl rand -hex 24))."
+  }
+}

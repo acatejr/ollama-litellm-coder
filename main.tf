@@ -32,9 +32,17 @@ resource "digitalocean_droplet" "ai_node" {
     # Single quotes make docker compose read the value literally (no $ expansion).
     stack_env_b64 = base64encode(<<-EOT
       LITELLM_MASTER_KEY='${var.litellm_master_key}'
+      LITELLM_API_KEY='${var.litellm_api_key}'
     EOT
     )
   })
+
+  lifecycle {
+    precondition {
+      condition     = var.litellm_api_key != var.litellm_master_key
+      error_message = "litellm_api_key must be different from litellm_master_key."
+    }
+  }
 }
 
 # Firewall Configuration
