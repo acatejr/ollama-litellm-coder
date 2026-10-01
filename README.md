@@ -7,7 +7,7 @@ A self-hosted, OpenAI-compatible coding model on a single DigitalOcean droplet, 
 | | |
 |---|---|
 | **Model** | `qwen2.5-coder:3b` (Q4, ~1.9 GB), 32k-token context |
-| **Serving** | Ollama (inference) behind LiteLLM (auth, keys, spend tracking, OpenAI-compatible API) |
+| **Serving** | Ollama behind a LiteLLM proxy (see [Design decisions](#design-decisions)) |
 | **Hardware** | DigitalOcean `s-4vcpu-8gb`: 4 shared vCPUs, 8 GB RAM, **CPU only** |
 | **Cost** | ~$48/month (billed hourly; destroy when idle to pay less) |
 | **Clients** | Anything OpenAI-compatible: OpenCode, Cline, the `openai` / `litellm` Python SDKs, `curl` |
@@ -25,7 +25,7 @@ flowchart LR
     end
 
     subgraph droplet["DigitalOcean droplet (Docker Compose)"]
-        L["LiteLLM proxy<br/>:4000<br/>auth · keys · spend"]
+        L["LiteLLM proxy<br/>:4000"]
         P[("Postgres<br/>keys + usage")]
         O["Ollama<br/>qwen2.5-coder:3b"]
     end
@@ -36,13 +36,12 @@ flowchart LR
     L -- "/api/chat" --> O
 ```
 
-- **Terraform** creates the droplet, the cloud firewall, and the droplet's `user_data`.
-- **cloud-init** installs Docker, writes the Compose stack and a root-only `.env` with the secrets, and starts everything.
-- **Docker Compose** runs three long-running services and two one-shot jobs:
-  - `postgres`: LiteLLM's database for API keys and usage logs.
-  - `ollama`: runs the model.
-  - `litellm`: the API clients talk to.
-  - `ollama-pull-model` and `litellm-create-key`: one-shot jobs that download the model and create the client API key on first boot.
+Terraform creates the droplet and cloud-init builds it on first boot (see [Repository layout](#repository-layout)). Docker Compose then runs three long-running services and two one-shot jobs:
+
+- `postgres`: LiteLLM's database for API keys and usage logs.
+- `ollama`: runs the model.
+- `litellm`: the API clients talk to.
+- `ollama-pull-model` and `litellm-create-key`: one-shot jobs that download the model and create the client API key on first boot.
 
 ## Where it fits, and where it doesn't
 
@@ -56,7 +55,7 @@ flowchart LR
 **Poor fit**
 - Autonomous, multi-step agent work (plan → edit many files → run → fix). 3B models lose track, repeat tool calls, or break the tool-call format.
 - Large-context work (whole-repo questions). Reading long prompts on CPU is slow; see [Performance](#performance).
-- Many concurrent users. Ollama is set to one request at a time for maximum single-user speed.
+- Many concurrent users. Requests are handled one at a time (see [Design decisions](#design-decisions)).
 
 ## Performance
 
@@ -72,7 +71,7 @@ flowchart LR
 **What that means in practice**
 - On CPU, the bottleneck is **reading the prompt**, not writing the answer. Short chat prompts feel fine; agent tools, which send 5–12k tokens of instructions on every request, feel slow.
 - Within one conversation, Ollama reuses the part of the prompt it has already read, so follow-up turns are much faster than the first.
-- The main hardware lever is a dedicated-CPU droplet (`c-4`, $84/month), which should improve both speed and consistency. It's worth benchmarking before committing.
+- The main hardware lever is a dedicated-CPU droplet (`c-4`; see [Cost](#cost)), which should improve both speed and consistency.
 
 **Measure it yourself** with [`benchmark.py`](benchmark.py), which calls the model through LiteLLM exactly as clients do:
 
@@ -90,7 +89,27 @@ It reports time to first token, prefill (prompt-reading) speed and output speed 
 | Dedicated CPU (`c-4`) | $84 | Faster, consistent performance |
 | Paid API / per-seat tools | _TBD_ | Fill in current spend for comparison |
 
-Droplets are billed hourly, so a droplet that only runs during work hours costs less. LiteLLM records usage per API key, which gives real numbers for the comparison above.
+Droplets are billed hourly, so a droplet that only runs during work hours costs less. For real usage numbers to fill in this comparison, see [Tracking usage with API keys](#tracking-usage-with-api-keys).
+
+### Tracking usage with API keys
+
+LiteLLM logs every request in Postgres against the API key that made it: the model used, prompt and output token counts, and cost. Giving each person, team or project its own key turns those logs into a usage report, and that report is what you need to manage costs.
+
+- **See who uses what.** Usage is broken down per key, so you can see which teams depend on the model and how heavily.
+- **Put a dollar value on the local model.** Ollama costs nothing per token, so LiteLLM records its spend as $0. If you set `input_cost_per_token` and `output_cost_per_token` in the model's `model_info` to a paid API's prices, the recorded "spend" becomes the amount the local model saved. That's the number to compare against the $48/month droplet.
+- **Control spending on paid models.** In the hybrid setup, the same keys can be given a budget (`max_budget` with `budget_duration`, e.g. `30d`) and rate limits. LiteLLM rejects a key's requests once it reaches its budget, so a runaway agent loop can't run up a large bill. Budgets count the recorded spend, so if you set placeholder prices on the local model, its keys will also stop working once they reach their budget. On local-model keys, either leave out the budget or set it well above expected usage.
+- **Decide based on data.** Per-key usage shows which work runs well on the local model and which needs a paid one, and whether the droplet is busy enough to justify its cost.
+
+Create a key per team with the master key:
+
+```bash
+curl -X POST http://<droplet-ip>:4000/key/generate \
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"key_alias": "team-web", "models": ["qwen2.5-coder-3b"]}'
+```
+
+Check usage with `GET /key/info?key=<key>` (totals for one key) or `GET /spend/logs` (individual requests), or in the admin UI at `http://<droplet-ip>:4000/ui`.
 
 ## Security
 
@@ -202,14 +221,20 @@ Run the example with `LITELLM_PROXY_API_BASE=http://<droplet-ip>:4000` in `.env`
 - **cloud-init, not SSH provisioners.** The droplet builds itself from `user_data`, so `terraform apply` needs no SSH connection and the build is repeatable. The Compose file is the single source of truth and is passed in unchanged (base64-encoded).
 - **A 3B model.** It fits comfortably in 8 GB alongside the 32k-token context cache and is the fastest option that still writes useful code on CPU. `qwen2.5-coder:7b` is noticeably better but roughly half the speed.
 - **Tuned for one fast user, not many.** One request at a time, the model kept loaded permanently, flash attention, and an 8-bit context cache. Each choice favors single-request latency over concurrency.
-- **Rebuilds are cheap and complete.** Changing the stack changes `user_data`, which rebuilds the droplet from scratch. Data in Postgres (keys, usage) is recreated on boot; persistent storage is on the roadmap.
+- **Rebuilds are cheap and complete.** Changing the stack changes `user_data`, which rebuilds the droplet from scratch.
 
 ## Roadmap
 
 1. Run `benchmark.py` on the droplet and replace the estimates above with measured numbers
 2. Tailscale for private access; close public ports
 3. Pin container image versions
-4. Hybrid routing: local model for routine work, a paid model for hard agent tasks, both through LiteLLM
+4. Hybrid routing: add a paid model to LiteLLM
 5. Reserved IP and fixed SSH host key, so rebuilds keep the same address
 6. Persistent volume for Postgres and the model; remote Terraform state
 7. Evaluate `c-4` (dedicated CPU) and `qwen2.5-coder:7b`
+
+## License
+
+This project is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). It is free for personal, research, and other noncommercial use.
+
+**Commercial use requires a separate license.** If you'd like to use this at your company, or want help deploying it, contact acatejr@gmail.com.
