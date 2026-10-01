@@ -9,6 +9,7 @@
 .envrc
 .direnv/
 
+!.env-template
 *env*
 *scratch*
 *.pyc
